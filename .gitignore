@@ -1,0 +1,18 @@
+# Captures
+*.pcap
+*.pcapng
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+
+# OS/editor cruft
+.DS_Store
+Thumbs.db
+*.swp
+
+# Mininet leftovers
+*.log
