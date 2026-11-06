@@ -23,8 +23,8 @@ hosts, and one attacker host — used to:
    secret-key rotation interval that shortens automatically the instant
    the detector confirms an attack.
 
-See [`docs/`](docs/) (or your own report) for the full write-up, literature
-review, and methodology — this README just covers running the code.
+All of the screenshots below are from an actual run of this project on a
+live Mininet testbed — not mockups.
 
 ## Requirements
 
@@ -67,6 +67,8 @@ Wireshark itself should be installed natively on Windows (not inside WSL);
 │   └── adaptive_syn_cookie.py  # adaptive, replay-resistant SYN cookie logic
 ├── scripts/
 │   └── capture_helper.sh       # labeled tcpdump capture helper
+├── assets/
+│   └── screenshots/            # evidence from an actual test run
 ├── requirements.txt
 └── README.md
 ```
@@ -82,13 +84,21 @@ sudo mn -c                 # clear any leftover Mininet state
 sudo python3 topology.py   # launches the topology, drops you into mininet>
 ```
 
+Mininet reports clean connectivity across all four hosts before anything
+else runs:
+
+![pingAll showing 0% packet loss](assets/screenshots/01_pingall_success.png)
+
 Inside `mininet>`, get the server's IP first:
 
 ```
 server ifconfig
 ```
 
-(Usually `10.0.0.1` — adjust the commands below if yours differs.)
+(Usually `10.0.0.1` — adjust the commands below if yours differs.) `dump`
+and `net` confirm the topology's actual links:
+
+![Topology dump and net output](assets/screenshots/02_topology_dump.png)
 
 ### 1. Baseline (normal traffic)
 
@@ -97,6 +107,15 @@ server python3 server.py &
 h1 python3 client_normal.py
 ```
 
+All 20 requests succeed cleanly against the idle server:
+
+![20/20 baseline requests succeeding](assets/screenshots/04_baseline_20of20.png)
+
+The corresponding Wireshark capture (`tcp.port == 8080`) shows a complete,
+standard TCP three-way handshake — SYN, SYN-ACK, ACK:
+
+![Wireshark baseline handshake with TCP flags expanded](assets/screenshots/03_baseline_handshake_wireshark.png)
+
 ### 2. Unmitigated attack
 
 ```
@@ -104,6 +123,16 @@ server python3 server.py &
 attacker python3 attack_synflood.py 10.0.0.1
 h1 python3 client_normal.py
 ```
+
+The flood sends 2000 SYN packets with randomized source IPs:
+
+![SYN flood running and completing](assets/screenshots/05_attack_terminal.png)
+
+Filtered in Wireshark (`tcp.flags.syn==1 && tcp.flags.ack==0`), 2,020 of
+8,221 captured packets are unanswered SYNs from randomized sources — the
+server's backlog being targeted directly:
+
+![Wireshark view of thousands of unanswered SYNs](assets/screenshots/06_attack_wireshark_flood.png)
 
 ### 3. Defended (detector + adaptive cookie active)
 
@@ -114,6 +143,21 @@ attacker python3 attack_synflood.py 10.0.0.1
 h1 python3 client_normal.py
 ```
 
+The detector's anomaly counter climbs across three windows, confirms the
+attack, and calls directly into the cookie module in the same instant —
+the closed loop this project is built around:
+
+![Detector confirming the attack and the cookie state changing](assets/screenshots/07_detector_confirm.png)
+
+Detection stays engaged for as long as the flood continues:
+
+![Sustained detection across dozens of windows](assets/screenshots/08_detector_sustained.png)
+
+Once the flood stops, the detector notices within a single window and
+relaxes the defense, clearing its `iptables` rules:
+
+![Detector relaxing the defense and a clean iptables -L](assets/screenshots/09_detector_relax_clean.png)
+
 ### 4. Genuine rush (false-positive check, no attacker)
 
 ```
@@ -121,9 +165,18 @@ server python3 ewma_detector.py &
 h1 python3 client_rush.py
 ```
 
-The detector should log a high request rate but **low** Rényi entropy, and
-should explicitly decline to trigger the defense — this is the scenario that
-demonstrates the system telling a real traffic spike apart from a spoofed one.
+300 rapid requests from one legitimate host — 255 succeed in ~9 seconds:
+
+![255/300 genuine rush requests succeeding](assets/screenshots/10_rush_255of300.png)
+
+The rate climbs to 60–70 req/s, but Rényi entropy of the source IPs stays
+at 0.00 bits the whole time, since it's genuinely all one host — so the
+detector correctly does **not** trigger the defense:
+
+![Detector logging high rate but zero entropy, not flagged as anomalous](assets/screenshots/11_rush_not_anomalous.png)
+
+This is the actual evidence that the system tells a real traffic spike
+apart from a spoofed one, instead of just reacting to volume.
 
 ### 5. Cookie algorithm demo (standalone, no Mininet needed)
 
@@ -131,8 +184,10 @@ demonstrates the system telling a real traffic spike apart from a spoofed one.
 python3 src/adaptive_syn_cookie.py
 ```
 
-Shows cookie generation/verification for both normal and attack states, and
-a replayed cookie being explicitly rejected.
+Shows cookie generation/verification for both normal and attack states,
+and a replayed cookie being explicitly rejected:
+
+![Cookie demo with replay correctly rejected](assets/screenshots/12_cookie_replay_demo.png)
 
 ### Capturing traffic
 
